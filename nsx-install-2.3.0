@@ -1,0 +1,258 @@
+
+apt install docker.io -y
+systemctl enable docker
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add
+apt-add-repository "deb http://apt.kubernetes.io/ kubernetes-xenial main"
+apt update
+apt install kubeadm -y
+swapoff -a
+apt install -y python2.7 python-pip python-dev python-six build-essential dkms
+
+IP=`ifconfig ens160 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}'`
+HOSTNAME=`hostname`
+echo "$IP $HOSTNAME" >> /etc/hosts
+
+cat <<EOF >> /etc/network/interfaces
+auto ens192
+iface ens192 inet manual
+up ip link set ens192 up
+EOF
+
+
+
+#wget -P /tmp http://192.168.10.142/libopenvswitch_2.9.1.9968033-1_amd64.deb
+#wget -P /tmp http://192.168.10.142/openvswitch-common_2.9.1.9968033-1_amd64.deb
+#wget -P /tmp http://192.168.10.142/openvswitch-datapath-dkms_2.9.1.9968033-1_all.deb
+#wget -P /tmp http://192.168.10.142/openvswitch-switch_2.9.1.9968033-1_amd64.deb
+
+dpkg -i /tmp/libopenvswitch_2.9.1.9968033-1_amd64.deb
+dpkg -i /tmp/openvswitch-common_2.9.1.9968033-1_amd64.deb
+dpkg -i /tmp/openvswitch-datapath-dkms_2.9.1.9968033-1_all.deb
+dpkg -i /tmp/openvswitch-switch_2.9.1.9968033-1_amd64.deb
+ 
+service openvswitch-switch force-reload-kmod
+
+ip link set ens192 up
+
+ovs-vsctl add-br br-int
+ovs-vsctl set-fail-mode br-int standalone
+ovs-vsctl add-port br-int ens192
+ovs-vsctl set Interface ens192 ofport=1
+
+#wget -P /tmp http://192.168.10.142/nsx-cni_2.3.0.10066840_amd64.deb
+dpkg -i /tmp/nsx-cni_2.3.0.10066840_amd64.deb
+
+sed -i "s/KUBELET_KUBECONFIG_ARGS=/KUBELET_KUBECONFIG_ARGS=--cgroup-driver=cgroupfs /g" /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+  
+sed -i /swap/s/^/#/ /etc/fstab
+
+kubeadm init
+mkdir -p /home/k8admin/.kube
+sudo cp -i /etc/kubernetes/admin.conf /home/k8admin/.kube/config
+sudo chown k8admin:k8admin -R /home/k8admin/.kube/
+
+
+kubectl --kubeconfig=/etc/kubernetes/admin.conf create clusterrolebinding default:default:clusteradmin --clusterrole cluster-admin --serviceaccount default:default
+
+
+#wget -P /tmp http://192.168.10.142/nsx-ncp-ubuntu-2.3.0.10066840.tar
+docker load -i /tmp/nsx-ncp-ubuntu-2.3.0.10066840.tar
+
+
+cat <<EOF > /tmp/ncp.ini
+[DEFAULT]
+[coe]
+cluster = ##CLUSTER##
+[k8s]
+ca_file = /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+client_token_file = /var/run/secrets/kubernetes.io/serviceaccount/token
+[nsx_v3]
+nsx_api_user = ##NSXUSER##
+nsx_api_password = ##NSXPASSWORD##
+nsx_api_managers = ##NSXADDR##
+insecure = True
+subnet_prefix = 27
+use_native_loadbalancer = True
+pool_algorithm = 'ROUND_ROBIN'
+service_size = 'SMALL'
+virtual_servers_per_lbs = 10
+[nsx_node_agent]
+[nsx_kube_proxy]
+ovs_uplink_port = ens192
+EOF
+
+kubectl --kubeconfig=/etc/kubernetes/admin.conf create configmap nsx-ncp-config --from-file=/tmp/ncp.ini
+
+cat <<EOF > /tmp/ncp-rc.yml
+# Replication Controller yaml for NCP
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  # VMware NSX Container Plugin
+  name: nsx-ncp
+  labels:
+    tier: nsx-networking
+    component: nsx-ncp
+    version: v1
+spec:
+  # Active-Active/Active-Standby is not supported in current release.
+  # so replica *must be* 1.
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        tier: nsx-networking
+        component: nsx-ncp
+        version: v1
+    spec:
+      # NCP shares the host management network.
+      hostNetwork: true
+#      nodeSelector:
+#        kubernetes.io/hostname: k8s-node-02
+#      tolerations:
+#      - key: "node-role.kubernetes.io/master"
+ #       operator: "Exists"
+  #      effect: "NoSchedule"
+      containers:
+        - name: nsx-ncp
+          # Docker image for NCP
+          image: registry.local/2.3.0.10066840/nsx-ncp-ubuntu
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - check_pod_liveness nsx-ncp
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 5
+          volumeMounts:
+          - name: config-volume
+            # NCP expects ncp.ini is present in /etc/nsx-ujo
+            mountPath: /etc/nsx-ujo/ncp.ini
+            subPath: ncp.ini
+            readOnly: true
+      volumes:
+        - name: config-volume
+          # ConfigMap nsx-ncp-config is expected to supply ncp.ini
+          configMap:
+            name: nsx-ncp-config
+EOF
+
+kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/ncp-rc.yml
+
+cat <<EOF > /tmp/nsx-node-agent.yml
+# nsx-node-agent DaemonSet
+apiVersion: extensions/v1beta1
+kind: DaemonSet
+metadata:
+  name: nsx-node-agent
+  labels:
+    tier: nsx-networking
+    component: nsx-node-agent
+    version: v1
+spec:
+  template:
+    metadata:
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/nsx-node-agent: localhost/node-agent-apparmor
+      labels:
+        tier: nsx-networking
+        component: nsx-node-agent
+        version: v1
+    spec:
+      hostNetwork: true
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+        - name: nsx-node-agent
+          # Docker image for NCP
+          image: registry.local/2.3.0.10066840/nsx-ncp-ubuntu
+          imagePullPolicy: IfNotPresent
+          # override NCP image entrypoint
+          command: ["start_node_agent"]
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - check_pod_liveness nsx-node-agent
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 5
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - SYS_ADMIN
+                - SYS_PTRACE
+                - DAC_READ_SEARCH
+          volumeMounts:
+          # ncp.ini
+          - name: config-volume
+            mountPath: /etc/nsx-ujo
+          # mount openvswitch dir
+          - name: openvswitch
+            mountPath: /var/run/openvswitch
+          # mount CNI socket path
+          - name: cni-sock
+            mountPath: /var/run/nsx-ujo
+          # mount container namespace
+          - name: netns
+            mountPath: /var/run/netns
+          # mount host proc
+          - name: proc
+            mountPath: /host/proc
+            readOnly: true
+        - name: nsx-kube-proxy
+          # Docker image for NCP
+          image: registry.local/2.3.0.10066840/nsx-ncp-ubuntu
+          imagePullPolicy: IfNotPresent
+          # override NCP image entrypoint
+          command: ["start_kube_proxy"]
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - check_pod_liveness nsx-kube-proxy
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - SYS_ADMIN
+                - SYS_PTRACE
+                - DAC_READ_SEARCH
+          volumeMounts:
+          # ncp.ini
+          - name: config-volume
+            mountPath: /etc/nsx-ujo
+          # mount openvswitch dir
+          - name: openvswitch
+            mountPath: /var/run/openvswitch
+      volumes:
+        - name: config-volume
+          configMap:
+            name: nsx-ncp-config
+        - name: cni-sock
+          hostPath:
+            path: /var/run/nsx-ujo
+        - name: netns
+          hostPath:
+            path: /var/run/netns
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: openvswitch
+          hostPath:
+            path: /var/run/openvswitch
+EOF
+
+kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/nsx-node-agent.yml
+

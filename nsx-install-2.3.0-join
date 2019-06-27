@@ -1,0 +1,51 @@
+
+apt install docker.io -y
+systemctl enable docker
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add
+apt-add-repository "deb http://apt.kubernetes.io/ kubernetes-xenial main"
+apt update
+apt install kubeadm -y
+swapoff -a
+apt install -y python2.7 python-pip python-dev python-six build-essential dkms
+
+IP=`ifconfig ens160 | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}'`
+HOSTNAME=`hostname`
+echo "$IP $HOSTNAME" >> /etc/hosts
+
+cat <<EOF >> /etc/network/interfaces
+auto ens192
+iface ens192 inet manual
+up ip link set ens192 up
+EOF
+
+
+
+#wget -P /tmp http://192.168.10.142/libopenvswitch_2.9.1.9968033-1_amd64.deb
+#wget -P /tmp http://192.168.10.142/openvswitch-common_2.9.1.9968033-1_amd64.deb
+#wget -P /tmp http://192.168.10.142/openvswitch-datapath-dkms_2.9.1.9968033-1_all.deb
+#wget -P /tmp http://192.168.10.142/openvswitch-switch_2.9.1.9968033-1_amd64.deb
+
+dpkg -i /tmp/libopenvswitch_2.9.1.9968033-1_amd64.deb
+dpkg -i /tmp/openvswitch-common_2.9.1.9968033-1_amd64.deb
+dpkg -i /tmp/openvswitch-datapath-dkms_2.9.1.9968033-1_all.deb
+dpkg -i /tmp/openvswitch-switch_2.9.1.9968033-1_amd64.deb
+ 
+service openvswitch-switch force-reload-kmod
+
+ip link set ens192 up
+
+ovs-vsctl add-br br-int
+ovs-vsctl set-fail-mode br-int standalone
+ovs-vsctl add-port br-int ens192
+ovs-vsctl set Interface ens192 ofport=1
+
+#wget -P /tmp http://192.168.10.142/nsx-cni_2.3.0.10066840_amd64.deb
+dpkg -i /tmp/nsx-cni_2.3.0.10066840_amd64.deb
+
+sed -i "s/KUBELET_KUBECONFIG_ARGS=/KUBELET_KUBECONFIG_ARGS=--cgroup-driver=cgroupfs /g" /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+  
+sed -i /swap/s/^/#/ /etc/fstab
+
+#wget -P /tmp http://192.168.10.142/nsx-ncp-ubuntu-2.3.0.10066840.tar
+docker load -i /tmp/nsx-ncp-ubuntu-2.3.0.10066840.tar
+

@@ -323,7 +323,7 @@ param (
 	
 	#run for each in number of nodes to create
 	foreach -Paralle ($number in $remaining) {
-		#run this inline script as workflow  should figure out how to reference functions in main script.  maybe a module??
+		#run this inline script as workflow  should figure out how to move all code to this
 		inlineScript {
 			function DoClone{
 				param([string]$cloneName,[string]$clonefrom,[string]$portGroup,[string]$nsxNetwork)
@@ -443,40 +443,7 @@ param (
 
 			}
 
-			function DoRemove{
-				param([string]$plainpassword,[string]$username,[string]$clusterName,[string]$nodes,[bool]$master)
-				$mastervm = (get-vm  | Where{$_.CustomFields.Item("K8-Cluster") -eq $clusterName -and  $_.CustomFields.Item("K8-Role") -eq "Master"})
-				$vms= (get-vm  | Where{$_.CustomFields.Item("K8-Cluster") -eq $clusterName -and  $_.CustomFields.Item("K8-Role") -eq "Node"})
-				if($master){
-					write-host "Removing all nodes from cluster $clusterName"
-					$nodes = $vms.length
-				}else{
-					Write-Host "Removing $nodes nodes from cluster $clusterName"
-				}
-				for($i=0;$i -lt $nodes;$i++){
-					$vm = $vms[$vms.length-$i-1]
-					Write-Host "Remove node $vm from cluster"
-					$script = "kubectl delete node "+$vm
-					Invoke-VMScript -VM $mastervm -ScriptType Bash -ScriptText $script -GuestUser $username -GuestPassword $plainpassword -RunAsync |out-null
-					Write-Host "Power off and delete $vm"
-        			try{
-						$results = ($vms[$vms.length-$i-1] | stop-vm -Confirm:$false)
-    	    		}catch{}
-       				try{
-						$results = ($vms[$vms.length-$i-1] | remove-vm -DeletePermanently -Confirm:$false -RunAsync)
-        			}catch{}
-				}
-				if($master){
-					write-host "Removing Master $master"
-    				try{
-						$results = ($mastervm	| stop-vm -Confirm:$false)
-    				}catch{}
-    				try{
-						$results = ($mastervm | remove-vm -DeletePermanently -Confirm:$false)
-    				}catch{}
-					Write-Host "Cluster Deleted"
-				}
-			}
+
 
 			function SetNSXTags{
 				param($vm,[string]$nsxUsername,[string]$nsxPassword,[string]$nsxIP,[string]$cluster)
@@ -564,7 +531,6 @@ param (
 		}
 	}
 }
-
 
 #main code 
 

@@ -1,0 +1,34 @@
+# deploy-k8s-local
+Deploys Kubernetes cluster from scratch with NSX for overlay and LB
+
+Requirements:
+vcenter
+powercli
+ubuntu template
+nsx installed, ip pools configured, k8s tags all applied to infra components
+
+The kube conf file will be copied to the current directory named as the clustername.conf
+
+Usage
+```
+.\k8-lc.ps1 -username <guest username> (-password <guest password> will prompt if not specifed) -nodes <number of nodes to add or remove> -clusterName <cluster-name> -clonefrom <template vm> -portGroup <portgroup to connect to> -nsxNetwork <nsx portgroup for pods. -nsxUsername <nsx maanger username> -nsxSecurePassword <nsx manager password> (-server <vcenter if not connected>) (-remove $true <removes nodes>) (-master $true <removes master and cluster>)
+```
+  
+examples
+
+1) Build a 3 node culster on an already connected vcenter (connect-viserver vcenter) from a template vm ubuntu-18.0.4-lts with a user k8admin already created on the network "VM Network"
+```
+.\k8-lc.ps1 -username k8admin -nodes 3 -clusterName Test-Cluster -clonefrom ubuntu-18.0.4-lts -portGroup "VM Network" -nsxNetwork "Pod Network" -nsxUsername admin -nsxSecurePassword VMware1!
+```
+2) Scale existing cluster Test-Cluster up by 3 nodes
+```
+.\k8-lc.ps1 -username k8admin -nodes 2 -clusterName Test-Cluster -clonefrom ubuntu-18.0.4-lts -portGroup "VM Network" -nsxNetwork "Pod Network" -nsxUsername admin -nsxSecurePassword VMware1!
+```
+3) Scale existing cluster Test-Cluster down by 2 nodes
+```
+.\k8-lc.ps1 -username k8admin -nodes 2 -clusterName Test-Cluster -clonefrom ubuntu-18.0.4-lts -portGroup "VM Network" -remove $true -nsxNetwork "Pod Network" -nsxUsername admin -nsxSecurePassword VMware1!
+```
+4) Delete cluster Test-Cluster
+```
+.\k8-lc.ps1 -username k8admin -nodes 3 -clusterName Test-Cluster -clonefrom ubuntu-18.0.4-lts -portGroup "VM Network" -remove $true -master $true -nsxNetwork "Pod Network" -nsxUsername admin -nsxSecurePassword VMware1!
+```

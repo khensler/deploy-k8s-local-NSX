@@ -5,7 +5,7 @@ Requirements:
 vcenter
 powercli
 ubuntu template
-nsx installed, ip pools configured, k8s tags all applied to infra components
+nsx-t 2.3.0 installed, ip pools configured, k8s tags all applied to infra components
 
 The kube conf file will be copied to the current directory named as the clustername.conf
 
@@ -32,3 +32,7 @@ examples
 ```
 .\k8-lc.ps1 -username k8admin -nodes 3 -clusterName Test-Cluster -clonefrom ubuntu-18.0.4-lts -portGroup "VM Network" -remove $true -master $true -nsxNetwork "Pod Network" -nsxUsername admin -nsxSecurePassword VMware1!
 ```
+#########################################################
+#Copyright © 2019 VMware, Inc. All Rights Reserved.
+#SPDX-License-Identifier: GPL-3.0-or-later
+#########################################################
